@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fk terminal</title>
+<link rel="stylesheet" href="/static/xterm.css">
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --line: #262c36;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #39c5cf;
+    --ok: #3fb950;
+    --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .logo {
+    font: 700 15px "Cascadia Code", "JetBrains Mono", Consolas, Menlo, monospace;
+    background: var(--accent);
+    color: #001417;
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+  .title { font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .spacer { flex: 1; }
+  .status {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--muted); font-size: 13px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .status.on .dot { background: var(--ok); }
+  .status.off .dot { background: var(--bad); }
+  button {
+    font: inherit; font-size: 13px;
+    color: var(--text);
+    background: #21262d;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #001417; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  main { flex: 1; min-height: 0; padding: 10px 12px 12px; display: flex; }
+  #term {
+    flex: 1; min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px;
+    background: #0a0d12;
+  }
+  footer {
+    color: var(--muted); font-size: 12px;
+    padding: 0 16px 10px;
+  }
+  kbd {
+    font: 11px "Cascadia Code", Consolas, Menlo, monospace;
+    border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 5px; color: var(--text);
+  }
+  @media (max-width: 600px) { .sub { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">fk</span>
+  <span class="title">File Kit terminal</span>
+  <span class="sub">compress &amp; convert PDF, PNG, JPG</span>
+  <span class="spacer"></span>
+  <span id="status" class="status"><span class="dot"></span><span id="statusText">connecting…</span></span>
+  <button id="runFk" class="primary" title="Run fk in the current folder">Run fk</button>
+  <button id="help">Help</button>
+  <button id="clear">Clear</button>
+  <button id="reconnect" hidden>Reconnect</button>
+</header>
+<main><div id="term"></div></main>
+<footer>
+  <code>cd</code> into any folder and type <code>fk</code>.
+  In the picker: <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Space</kbd> select · <kbd>Enter</kbd> continue · <kbd>Esc</kbd> back
+</footer>
+
+<script src="/static/xterm.js"></script>
+<script src="/static/addon-fit.js"></script>
+<script>
+(() => {
+  const TerminalCtor = window.Terminal.Terminal || window.Terminal;
+  const FitCtor = window.FitAddon.FitAddon || window.FitAddon;
+
+  const term = new TerminalCtor({
+    cursorBlink: true,
+    fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, Menlo, monospace',
+    fontSize: 14,
+    scrollback: 5000,
+    theme: {
+      background: '#0a0d12', foreground: '#e6edf3', cursor: '#39c5cf',
+      selectionBackground: '#264f78',
+      black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
+      blue: '#58a6ff', magenta: '#d2a8ff', cyan: '#39c5cf', white: '#e6edf3',
+      brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364',
+      brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#e2c5ff',
+      brightCyan: '#56d4dd', brightWhite: '#ffffff'
+    }
+  });
+  const fit = new FitCtor();
+  term.loadAddon(fit);
+  term.open(document.getElementById('term'));
+  fit.fit();
+  term.focus();
+
+  const token = new URLSearchParams(location.search).get('t') || '';
+  const statusEl = document.getElementById('status');
+  const statusText = document.getElementById('statusText');
+  const reconnectBtn = document.getElementById('reconnect');
+  let ws = null;
+
+  function setStatus(state, text) {
+    statusEl.className = 'status ' + state;
+    statusText.textContent = text;
+    reconnectBtn.hidden = state !== 'off';
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }
+  function sendResize() {
+    send({ type: 'resize', cols: term.cols, rows: term.rows });
+  }
+
+  function connect() {
+    if (!token) {
+      setStatus('off', 'missing token');
+      term.writeln('\r\n\x1b[31mThis page needs the link printed by `fk serve` (it ends in ?t=...).\x1b[0m');
+      return;
+    }
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws?t=${encodeURIComponent(token)}`);
+    ws.binaryType = 'arraybuffer';
+    setStatus('', 'connecting…');
+
+    ws.onopen = () => { setStatus('on', 'connected'); fit.fit(); sendResize(); term.focus(); };
+    ws.onmessage = (e) => {
+      term.write(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
+    };
+    ws.onclose = (e) => {
+      setStatus('off', 'disconnected');
+      term.writeln('\r\n\x1b[2m[session ended' + (e.reason ? ': ' + e.reason : '') + ' — press Reconnect]\x1b[0m');
+    };
+  }
+
+  term.onData((data) => send({ type: 'input', data }));
+  term.onResize(() => sendResize());
+  new ResizeObserver(() => fit.fit()).observe(document.getElementById('term'));
+
+  document.getElementById('runFk').onclick = () => { send({ type: 'input', data: 'fk\r' }); term.focus(); };
+  document.getElementById('help').onclick = () => { send({ type: 'input', data: 'fk help\r' }); term.focus(); };
+  document.getElementById('clear').onclick = () => { term.clear(); term.focus(); };
+  reconnectBtn.onclick = () => { term.reset(); connect(); };
+
+  connect();
+})();
+</script>
+</body>
+</html>
