@@ -1,0 +1,3 @@
+# Release to install. Override with -e app_version=v1.2.0 (the Makefile does this),
+# or answer the prompt in deploy.yml.
+app_version: v1.1.0

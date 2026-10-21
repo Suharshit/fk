@@ -1,0 +1,26 @@
+- name: Add the OpenVox 8 apt repository
+  ansible.builtin.apt:
+    deb: "https://apt.voxpupuli.org/openvox8-release-ubuntu{{ ansible_distribution_version }}.deb"
+
+- name: Install OpenVox agent
+  ansible.builtin.apt:
+    name: openvox-agent
+    state: present
+    update_cache: true
+
+- name: Point the agent at the Puppet server
+  community.general.ini_file:
+    path: /etc/puppetlabs/puppet/puppet.conf
+    section: agent
+    option: "{{ item.k }}"
+    value: "{{ item.v }}"
+    mode: "0644"
+  loop:
+    - { k: server, v: puppet }
+    - { k: runinterval, v: 30m }
+
+- name: Start the agent service
+  ansible.builtin.systemd_service:
+    name: puppet
+    state: started
+    enabled: true

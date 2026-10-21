@@ -1,0 +1,28 @@
+# Settings shared by every server. Values come from pipeline.config.yml.
+
+# --- the app ---
+app_name: fk
+app_repo: Suharshit/fk
+app_port: 8000
+app_health_path: /healthz
+app_artifact: binary                       # binary | container | source
+app_artifact_name: fk-linux-amd64
+app_install_method: release                # release (GitHub Releases) | copy (local dist/ build)
+app_local_artifact: "{{ playbook_dir }}/../../dist/fk-linux-amd64"
+app_run_args: "api"                        # the service runs: /opt/fk/current api
+app_env:                                   # read by `fk api`
+  PORT: "{{ app_port }}"
+  FK_WORKDIR: "/var/lib/{{ app_name }}"
+  FK_MAX_UPLOAD_MB: "25"
+  FK_MAX_PDF_PAGES: "50"
+app_system_packages: [ghostscript, poppler-utils]   # PDF compression and PDF -> image
+
+# --- who manages what ---
+config_owner: puppet                       # puppet | ansible
+puppet_enabled: true
+nagios_enabled: true
+ops_private_ip: "{{ hostvars[groups['ops'][0]]['private_ip'] if groups.get('ops') else '' }}"
+
+# --- Nagios functional check: upload a real JPEG and expect a compressed JPEG back ---
+nagios_sample_file: "{{ playbook_dir }}/files/sample.jpg"
+nagios_functional_args: "--path /api/compress --upload /usr/local/share/nagios-sample.jpg --expect-type image/jpeg -w 2 -c 5"

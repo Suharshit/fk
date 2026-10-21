@@ -1,0 +1,44 @@
+# Builds the whole system from bare Ubuntu servers.
+# Run: ansible-playbook site.yml -e app_version=v1.1.0   (or: make configure)
+
+- name: Wait for new servers to accept SSH
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+- name: Baseline for every server
+  hosts: all
+  become: true
+  roles:
+    - common
+
+- name: Ops server (Puppet server, Nagios)
+  hosts: ops
+  become: true
+  roles:
+    - role: puppet_server
+      when: puppet_enabled
+    - role: nagios
+      when: nagios_enabled
+
+- name: App servers
+  hosts: app
+  become: true
+  roles:
+    - app
+    - role: nrpe
+      when: nagios_enabled
+    - role: puppet_agent
+      when: puppet_enabled
+
+- name: Load balancer
+  hosts: lb
+  become: true
+  roles:
+    - role: lb
+      when: config_owner == 'ansible'
+    - role: puppet_agent
+      when: puppet_enabled

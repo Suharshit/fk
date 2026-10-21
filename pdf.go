@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"errors"
 	"fmt"
 	"image/color"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ---------- images -> PDF (pure Go, no tools needed) ----------
@@ -133,6 +135,23 @@ func imagesToPDF(out string, paths []string) error {
 
 // ---------- PDF compression and PDF -> images (Ghostscript / Poppler) ----------
 
+// Limits used by the web API (the CLI leaves them at their defaults).
+var (
+	toolTimeout = 5 * time.Minute // longest a single gs/pdftoppm run may take
+	maxPDFPages = 0               // pages rendered by PDF -> image; 0 = all
+)
+
+// runTool runs an external tool with a time limit and returns its output.
+func runTool(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("%s took longer than %s", filepath.Base(name), toolTimeout)
+	}
+	return out, err
+}
+
 var errNoGhostscript = errors.New("Ghostscript is not installed. Install it with:  sudo apt install ghostscript")
 
 func compressPDF(in, out string, lvl Level) error {
@@ -141,12 +160,12 @@ func compressPDF(in, out string, lvl Level) error {
 		return errNoGhostscript
 	}
 	setting := map[Level]string{Light: "/printer", Balanced: "/ebook", Strong: "/screen"}[lvl]
-	cmd := exec.Command(gs,
+	msg, err := runTool(gs,
 		"-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.5", "-dPDFSETTINGS="+setting,
 		"-dNOPAUSE", "-dQUIET", "-dBATCH", "-dSAFER",
 		"-dDetectDuplicateImages=true", "-dCompressFonts=true",
 		"-sOutputFile="+out, in)
-	if msg, err := cmd.CombinedOutput(); err != nil {
+	if err != nil {
 		return fmt.Errorf("ghostscript failed: %s", firstLine(msg, err))
 	}
 	return nil
@@ -167,8 +186,11 @@ func pdfToImages(in string, t Target) ([]string, error) {
 		if t == ToJPG {
 			flag = "-jpeg"
 		}
-		cmd := exec.Command(tool, flag, "-r", "150", in, filepath.Join(dir, "page"))
-		if msg, err := cmd.CombinedOutput(); err != nil {
+		args := []string{flag, "-r", "150"}
+		if maxPDFPages > 0 {
+			args = append(args, "-l", fmt.Sprint(maxPDFPages))
+		}
+		if msg, err := runTool(tool, append(args, in, filepath.Join(dir, "page"))...); err != nil {
 			os.RemoveAll(dir)
 			return nil, fmt.Errorf("pdftoppm failed: %s", firstLine(msg, err))
 		}
@@ -177,11 +199,13 @@ func pdfToImages(in string, t Target) ([]string, error) {
 		if t == ToJPG {
 			device = "jpeg"
 		}
-		cmd := exec.Command(gs, "-sDEVICE="+device, "-r150", "-dJPEGQ=90",
+		args := []string{"-sDEVICE=" + device, "-r150", "-dJPEGQ=90",
 			"-dTextAlphaBits=4", "-dGraphicsAlphaBits=4",
-			"-dNOPAUSE", "-dQUIET", "-dBATCH", "-dSAFER",
-			"-sOutputFile="+filepath.Join(dir, "page-%02d."+ext), in)
-		if msg, err := cmd.CombinedOutput(); err != nil {
+			"-dNOPAUSE", "-dQUIET", "-dBATCH", "-dSAFER"}
+		if maxPDFPages > 0 {
+			args = append(args, fmt.Sprintf("-dLastPage=%d", maxPDFPages))
+		}
+		if msg, err := runTool(gs, append(args, "-sOutputFile="+filepath.Join(dir, "page-%02d."+ext), in)...); err != nil {
 			os.RemoveAll(dir)
 			return nil, fmt.Errorf("ghostscript failed: %s", firstLine(msg, err))
 		}

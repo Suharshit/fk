@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install PDF tools (used by the tests)
+        run: sudo apt-get update -q && sudo apt-get install -y -q ghostscript poppler-utils
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Build
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -o dist/fk-linux-amd64 .
+          ./dist/fk-linux-amd64 version
+
+      - name: Checksum
+        working-directory: dist
+        run: sha256sum fk-linux-amd64 > fk-linux-amd64.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/fk-linux-amd64 dist/fk-linux-amd64.sha256 \
+            --title "fk ${GITHUB_REF_NAME}" --generate-notes

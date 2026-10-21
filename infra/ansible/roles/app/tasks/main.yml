@@ -1,0 +1,68 @@
+- name: Install packages the app needs
+  ansible.builtin.apt:
+    name: "{{ app_system_packages }}"
+    state: present
+  when: app_system_packages | length > 0
+
+- name: Create a system user for the app
+  ansible.builtin.user:
+    name: "{{ app_name }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create app folders
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_name }}"
+    mode: "0755"
+  loop:
+    - "/opt/{{ app_name }}/releases"
+    - "/var/lib/{{ app_name }}"
+
+- name: Get the release
+  block:
+    - name: Download from GitHub Releases
+      ansible.builtin.get_url:
+        url: "https://github.com/{{ app_repo }}/releases/download/{{ app_version }}/{{ app_artifact_name }}"
+        dest: "/opt/{{ app_name }}/releases/{{ app_name }}-{{ app_version }}"
+        mode: "0755"
+      when: app_install_method == 'release'
+
+    - name: Copy a locally built artifact
+      ansible.builtin.copy:
+        src: "{{ app_local_artifact }}"
+        dest: "/opt/{{ app_name }}/releases/{{ app_name }}-{{ app_version }}"
+        mode: "0755"
+      when: app_install_method == 'copy'
+
+    - name: Point "current" at this version
+      ansible.builtin.file:
+        src: "/opt/{{ app_name }}/releases/{{ app_name }}-{{ app_version }}"
+        dest: "/opt/{{ app_name }}/current"
+        state: link
+        force: true
+      notify: Restart app
+  rescue:
+    - name: Explain the failure
+      ansible.builtin.fail:
+        msg: "Could not install {{ app_name }} {{ app_version }}. Does that release exist?"
+
+- name: Install the systemd service
+  ansible.builtin.template:
+    src: app.service.j2
+    dest: "/etc/systemd/system/{{ app_name }}.service"
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart app
+
+- name: Start the app now and at boot
+  ansible.builtin.systemd_service:
+    name: "{{ app_name }}"
+    state: started
+    enabled: true
+
+- name: Apply pending restarts before checking health
+  ansible.builtin.meta: flush_handlers

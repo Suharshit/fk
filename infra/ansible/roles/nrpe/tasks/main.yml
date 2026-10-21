@@ -1,0 +1,21 @@
+- name: Install the NRPE agent and plugins
+  ansible.builtin.apt:
+    name: [nagios-nrpe-server, monitoring-plugins]
+    state: present
+
+- name: Allow only the ops server to ask for checks
+  ansible.builtin.lineinfile:
+    path: /etc/nagios/nrpe.cfg
+    regexp: '^allowed_hosts='
+    line: "allowed_hosts=127.0.0.1,{{ ops_private_ip }}"
+  notify: Restart nrpe
+
+- name: Project checks
+  ansible.builtin.copy:
+    dest: /etc/nagios/nrpe.d/{{ app_name }}.cfg
+    mode: "0644"
+    content: |
+      command[check_root_disk]=/usr/lib/nagios/plugins/check_disk -w 20% -c 10% -p /
+      command[check_load]=/usr/lib/nagios/plugins/check_load -w 2,2,2 -c 4,4,4
+      command[check_app_proc]=/usr/lib/nagios/plugins/check_procs -c 1: -a /opt/{{ app_name }}/current
+  notify: Restart nrpe

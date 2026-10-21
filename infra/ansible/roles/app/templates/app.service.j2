@@ -1,0 +1,21 @@
+[Unit]
+Description={{ app_name }} (managed by Ansible)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ app_name }}
+WorkingDirectory=/var/lib/{{ app_name }}
+ExecStart=/opt/{{ app_name }}/current {{ app_run_args }}
+{% for k, v in app_env.items() %}
+Environment={{ k }}={{ v }}
+{% endfor %}
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/{{ app_name }} /tmp
+
+[Install]
+WantedBy=multi-user.target

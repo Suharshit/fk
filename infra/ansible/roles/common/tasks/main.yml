@@ -1,0 +1,24 @@
+- name: Update apt cache and install basics
+  ansible.builtin.apt:
+    name: [curl, ca-certificates, htop, rsync, unattended-upgrades]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300            # fresh cloud servers run apt updates at boot
+
+- name: Set hostname to the inventory name
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Let every node find the Puppet server as "puppet"
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ ops_private_ip }} puppet ops"
+    regexp: '\spuppet(\s|$)'
+  when: puppet_enabled and ops_private_ip | length > 0
+
+- name: Record this node's role (read by a custom Puppet fact)
+  ansible.builtin.copy:
+    dest: /etc/node_role
+    content: "{{ group_names | first }}\n"
+    mode: "0644"

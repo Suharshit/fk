@@ -1,0 +1,36 @@
+# pipeline.config.yml — decisions for the fk DevOps pipeline.
+# Built from docs/DEVOPS_PIPELINE_TEMPLATE.md with the template's defaults.
+project:
+  name: fk
+  repo: Suharshit/fk
+  language: go
+  artifact: binary
+  artifact_name: fk-linux-amd64
+commands:
+  install: "go mod download"
+  lint: "gofmt -l . && go vet ./..."
+  test: "go test ./..."
+  build: "CGO_ENABLED=0 go build -trimpath -ldflags '-s -w -X main.version=<tag>' -o dist/fk-linux-amd64 ."
+  run: "fk api --port 8000"
+app:
+  port: 8000
+  health_path: /healthz
+  functional_check: "POST /api/compress sample.jpg -> 200 image/jpeg"
+  system_packages: [ghostscript, poppler-utils]
+environment:
+  target: aws            # Vagrant is also set up: see Vagrantfile and inventory/vagrant.ini
+  aws_region: ap-south-1 # Mumbai
+  app_count: 2
+  load_balancer: true
+stages:
+  ci: true
+  release: true
+  infra: true
+  ansible: true
+  puppet: true
+  nagios: true
+  make: true
+  demo: true
+  presentation: true
+config_owner: puppet     # Ansible deploys, Puppet keeps nginx/service/cron in shape
+deadline: INT333 project presentation

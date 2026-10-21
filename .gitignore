@@ -1,1 +1,22 @@
+# build output
 dist/
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!example.tfvars
+tfplan
+crash.log
+# ansible
+*.retry
+infra/ansible/inventory/hosts.ini
+# vagrant
+.vagrant/
+# secrets: never commit these
+*.pem
+.env
+.vault_pass*
+# python
+__pycache__/
+/fk

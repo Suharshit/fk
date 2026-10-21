@@ -2,6 +2,7 @@
 //
 //	fk          pick files in the current folder, then compress or convert them
 //	fk serve    open a web terminal in your browser, connected to this machine
+//	fk api      run the upload web app + HTTP API (for servers)
 package main
 
 import (
@@ -9,7 +10,8 @@ import (
 	"os"
 )
 
-const version = "1.0.0"
+// version is set at build time: go build -ldflags "-X main.version=v1.2.0"
+var version = "dev"
 
 func main() {
 	args := os.Args[1:]
@@ -27,6 +29,10 @@ func main() {
 	switch args[0] {
 	case "serve", "web":
 		if err := runServe(args[1:]); err != nil {
+			fail(err)
+		}
+	case "api":
+		if err := runAPI(args[1:]); err != nil {
 			fail(err)
 		}
 	case "compress", "convert", "merge":
@@ -59,6 +65,9 @@ Usage:
       --port N       use another port (default 7700)
       --dir PATH     folder the web terminal starts in (default: current)
       --no-open      don't try to open the browser
+  fk api             run the upload web app + HTTP API (port 8000)
+      --port N       port (default 8000, or $PORT)
+      --addr IP      address to listen on (default 0.0.0.0)
   fk version         print the version
 
 Without the picker (for scripts):

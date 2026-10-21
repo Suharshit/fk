@@ -1,0 +1,9 @@
+version: 5
+defaults:
+  datadir: data
+  data_hash: yaml_data
+hierarchy:
+  - name: "Generated node data"
+    path: "nodes.yaml"
+  - name: "Common"
+    path: "common.yaml"

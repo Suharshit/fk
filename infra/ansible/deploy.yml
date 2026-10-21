@@ -1,0 +1,31 @@
+- name: Rolling deploy
+  hosts: app
+  become: true
+  serial: 1                     # one server at a time, so the site stays up
+  vars_prompt:
+    - name: app_version
+      prompt: "Version tag to deploy (e.g. v1.2.0)"
+      private: false
+  pre_tasks:
+    - name: Silence Nagios alerts for this host while it updates
+      community.general.nagios:
+        action: downtime
+        host: "{{ inventory_hostname }}"
+        services: host
+        minutes: 10
+        cmdfile: /var/lib/nagios4/rw/nagios.cmd
+        comment: "Ansible rolling deploy {{ app_version }}"
+      delegate_to: "{{ groups['ops'][0] }}"
+      when: nagios_enabled
+      tags: [nagios]
+  roles:
+    - app
+  post_tasks:
+    - name: Wait until the app is healthy before moving to the next server
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}{{ app_health_path }}"
+        status_code: 200
+      register: health
+      retries: 10
+      delay: 3
+      until: health.status == 200

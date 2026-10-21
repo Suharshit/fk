@@ -1,0 +1,48 @@
+- name: Add the OpenVox 8 apt repository
+  ansible.builtin.apt:
+    deb: "https://apt.voxpupuli.org/openvox8-release-ubuntu{{ ansible_distribution_version }}.deb"
+
+- name: Install OpenVox server
+  ansible.builtin.apt:
+    name: openvox-server
+    state: present
+    update_cache: true
+
+- name: Use less memory on a small VM (default heap is 2 GB)
+  ansible.builtin.lineinfile:
+    path: /etc/default/puppetserver
+    regexp: '^JAVA_ARGS='
+    line: 'JAVA_ARGS="-Xms512m -Xmx1g"'
+  notify: Restart puppetserver
+
+- name: Certificate names the server answers to
+  community.general.ini_file:
+    path: /etc/puppetlabs/puppet/puppet.conf
+    section: server
+    option: dns_alt_names
+    value: "puppet,ops,{{ inventory_hostname }}"
+    mode: "0644"
+
+- name: Ship our Puppet code to the server
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../puppet/"
+    dest: /etc/puppetlabs/code/environments/production/
+    delete: false
+  tags: [puppet_code]
+
+- name: Tell Puppet which servers are app servers (Hiera data)
+  ansible.builtin.copy:
+    dest: /etc/puppetlabs/code/environments/production/data/nodes.yaml
+    content: |
+      app_backends:
+      {% for h in groups['app'] %}
+        - "{{ hostvars[h].private_ip }}"
+      {% endfor %}
+    mode: "0644"
+  tags: [puppet_code]
+
+- name: Start puppetserver
+  ansible.builtin.systemd_service:
+    name: puppetserver
+    state: started
+    enabled: true

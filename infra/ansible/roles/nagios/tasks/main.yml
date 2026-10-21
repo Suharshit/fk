@@ -1,0 +1,38 @@
+- name: Install Nagios, plugins and the NRPE client
+  ansible.builtin.apt:
+    name: [nagios4, monitoring-plugins, nagios-nrpe-plugin, apache2]
+    state: present
+
+- name: Allow external commands (Ansible uses this to schedule downtime)
+  ansible.builtin.lineinfile:
+    path: /etc/nagios4/nagios.cfg
+    regexp: '^check_external_commands='
+    line: check_external_commands=1
+  notify: Restart nagios
+
+- name: Install the custom plugin
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../nagios/plugins/check_app.py"
+    dest: /usr/local/lib/nagios/plugins/check_app.py
+    mode: "0755"
+
+- name: Sample file for the functional check
+  ansible.builtin.copy:
+    src: "{{ nagios_sample_file }}"
+    dest: /usr/local/share/nagios-sample{{ nagios_sample_file | splitext | last }}
+    mode: "0644"
+  when: nagios_sample_file is defined
+
+- name: Hosts, services and commands for this project
+  ansible.builtin.template:
+    src: project.cfg.j2
+    dest: /etc/nagios4/conf.d/{{ app_name }}.cfg
+    mode: "0644"
+    validate: "/usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg"
+  notify: Restart nagios
+
+- name: Start Nagios
+  ansible.builtin.systemd_service:
+    name: nagios4
+    state: started
+    enabled: true

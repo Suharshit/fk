@@ -1,0 +1,95 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: App — format, vet, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install PDF tools (used by the tests)
+        run: sudo apt-get update -q && sudo apt-get install -y -q ghostscript poppler-utils
+
+      - name: Download modules
+        run: go mod download
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "Run gofmt on: $unformatted"; exit 1; fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Build
+        run: |
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X main.version=ci-${GITHUB_SHA::7}" \
+            -o dist/fk-linux-amd64 .
+          ./dist/fk-linux-amd64 version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fk-linux-amd64
+          path: dist/fk-linux-amd64
+          retention-days: 7
+
+  infra:
+    name: Infra — Terraform, Ansible, Puppet, Nagios
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform fmt + validate
+        working-directory: infra/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Ansible lint + syntax check
+        working-directory: infra/ansible
+        run: |
+          pip install -q ansible ansible-lint
+          ansible-galaxy collection install -r requirements.yml
+          ansible-lint site.yml deploy.yml
+          ansible-playbook -i inventory/vagrant.ini site.yml --syntax-check
+          ansible-playbook -i inventory/vagrant.ini deploy.yml --syntax-check -e app_version=v0.0.0
+
+      - name: Puppet lint
+        run: |
+          sudo gem install --no-document puppet-lint
+          puppet-lint --fail-on-warnings infra/puppet
+
+      - name: Ruby syntax (facts, Vagrantfile)
+        run: |
+          for f in $(find infra/puppet -name '*.rb') Vagrantfile; do ruby -c "$f"; done
+
+      - name: Nagios plugin
+        run: |
+          python3 -m py_compile infra/nagios/plugins/check_app.py
+          # nothing listens on port 9, so the plugin must report CRITICAL (exit 2)
+          set +e
+          python3 infra/nagios/plugins/check_app.py -H 127.0.0.1 -p 9
+          rc=$?
+          set -e
+          test "$rc" -eq 2

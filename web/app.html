@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fk · Compress &amp; convert files</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16191d; --muted: #5f6b7a;
+    --line: #dde2e8; --accent: #0e8a95; --accent-ink: #ffffff; --soft: #e7f5f6;
+    --ok: #1a7f37; --bad: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e;
+      --line: #2a313c; --accent: #39c5cf; --accent-ink: #001417; --soft: #10282b;
+      --ok: #3fb950; --bad: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 48px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .logo {
+    font: 700 18px "Cascadia Code", Consolas, Menlo, monospace;
+    background: var(--accent); color: var(--accent-ink);
+    padding: 2px 10px; border-radius: 8px;
+  }
+  h1 { font-size: 22px; margin: 0; }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px; margin-bottom: 16px;
+  }
+  #drop {
+    border: 2px dashed var(--line); border-radius: 10px;
+    padding: 32px 16px; text-align: center; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  #drop.over, #drop:hover { border-color: var(--accent); background: var(--soft); }
+  #drop strong { color: var(--accent); }
+  #drop small { display: block; color: var(--muted); margin-top: 4px; }
+  ul.files { list-style: none; padding: 0; margin: 14px 0 0; }
+  ul.files li {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  ul.files li:last-child { border-bottom: 0; }
+  .tag { font: 600 11px monospace; padding: 1px 6px; border-radius: 4px; background: var(--soft); color: var(--accent); margin-right: 6px; }
+  .size { color: var(--muted); white-space: nowrap; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tabs button, .opts button {
+    font: inherit; font-size: 14px; color: var(--text);
+    background: transparent; border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 14px; cursor: pointer;
+  }
+  .tabs button[aria-pressed="true"], .opts button[aria-pressed="true"] {
+    background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+  }
+  .tabs button:disabled { opacity: .4; cursor: not-allowed; }
+  .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+  #go {
+    width: 100%; margin-top: 16px; padding: 12px; font: 600 15px system-ui, sans-serif;
+    border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink); cursor: pointer;
+  }
+  #go:disabled { opacity: .5; cursor: not-allowed; }
+  #results li { align-items: center; }
+  #results a { color: var(--accent); font-weight: 600; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
+  footer code { font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header><span class="logo">fk</span><h1>Compress &amp; convert files</h1></header>
+  <p class="lead">PDF, PNG and JPG. Files are processed and deleted straight away. Nothing is stored.</p>
+
+  <section class="card">
+    <label id="drop" for="picker">
+      <strong>Choose files</strong> or drop them here
+      <small>PDF, PNG, JPG · up to <span id="limit">25</span> MB each</small>
+    </label>
+    <input id="picker" type="file" accept=".pdf,.png,.jpg,.jpeg" multiple hidden>
+    <ul class="files" id="files"></ul>
+  </section>
+
+  <section class="card">
+    <div class="tabs" role="group" aria-label="Action">
+      <button data-action="compress" aria-pressed="true">Compress</button>
+      <button data-action="convert" aria-pressed="false">Convert</button>
+      <button data-action="merge" aria-pressed="false">Merge images into one PDF</button>
+    </div>
+    <div class="opts" id="opts"></div>
+    <p class="hint" id="hint"></p>
+    <button id="go" disabled>Choose a file first</button>
+  </section>
+
+  <section class="card" id="resultsCard" hidden>
+    <ul class="files" id="results"></ul>
+  </section>
+
+  <footer>fk <span id="ver"></span> · served by <span id="host"></span> · <a href="https://github.com/Suharshit/fk">source</a></footer>
+</main>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const state = { files: [], action: 'compress', level: 'balanced', to: 'png' };
+  const human = (n) => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+  const kind = (f) => (f.name.split('.').pop() || '').toLowerCase().replace('jpeg', 'jpg');
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  fetch('/version').then(r => r.json()).then(v => { $('#ver').textContent = v.version; $('#host').textContent = v.host; $('#limit').textContent = v.max_upload_mb; }).catch(() => {});
+
+  function addFiles(list) {
+    for (const f of list) {
+      if (['pdf', 'png', 'jpg'].includes(kind(f))) state.files.push(f);
+    }
+    render();
+  }
+  $('#picker').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+  const drop = $('#drop');
+  ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', (e) => addFiles(e.dataTransfer.files));
+
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { state.action = b.dataset.action; render(); });
+
+  function targets() {
+    const kinds = new Set(state.files.map(kind));
+    if (kinds.has('pdf')) return ['png', 'jpg'];
+    return ['png', 'jpg', 'pdf', 'gif', 'bmp', 'tiff'];
+  }
+
+  function options() {
+    const box = $('#opts'); box.innerHTML = '';
+    let items = [], key = null;
+    if (state.action === 'compress') { items = ['light', 'balanced', 'strong']; key = 'level'; }
+    if (state.action === 'convert') {
+      items = targets(); key = 'to';
+      if (!items.includes(state.to)) state.to = items[0];
+    }
+    for (const it of items) {
+      const b = document.createElement('button');
+      b.textContent = key === 'to' ? it.toUpperCase() : (it === 'balanced' ? 'balanced (recommended)' : it);
+      b.setAttribute('aria-pressed', String(state[key] === it));
+      b.onclick = () => { state[key] = it; render(); };
+      box.appendChild(b);
+    }
+    const hints = {
+      compress: { light: 'Best quality, small savings.', balanced: 'Good quality, much smaller. Large photos are resized to 2560px.', strong: 'Smallest files. Photos resized to 1600px, PNGs reduced to 64 colours.' }[state.level],
+      convert: 'Each file is converted separately. A multi-page PDF comes back as a zip of images.',
+      merge: 'All selected images become one PDF, one image per page, in the order shown.'
+    };
+    $('#hint').textContent = hints[state.action];
+  }
+
+  function render() {
+    const ul = $('#files'); ul.innerHTML = '';
+    state.files.forEach((f, i) => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span><span class="tag">${kind(f).toUpperCase()}</span>${esc(f.name)}</span>
+        <span class="size">${human(f.size)} · <a href="#" data-i="${i}">remove</a></span>`;
+      ul.appendChild(li);
+    });
+    ul.querySelectorAll('a[data-i]').forEach(a => a.onclick = (e) => { e.preventDefault(); state.files.splice(+a.dataset.i, 1); render(); });
+
+    const images = state.files.filter(f => kind(f) !== 'pdf').length;
+    const canMerge = images >= 2 && images === state.files.length;
+    const mergeBtn = document.querySelector('[data-action="merge"]');
+    mergeBtn.disabled = !canMerge;
+    if (!canMerge && state.action === 'merge') state.action = 'compress';
+    document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.action === state.action)));
+    options();
+
+    const go = $('#go');
+    go.disabled = state.files.length === 0;
+    go.textContent = state.files.length === 0 ? 'Choose a file first'
+      : state.action === 'merge' ? `Merge ${state.files.length} images`
+      : `${state.action === 'compress' ? 'Compress' : 'Convert'} ${state.files.length} file${state.files.length > 1 ? 's' : ''}`;
+  }
+
+  function resultRow(name, text, cls, blob, filename) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${esc(name)}</span><span class="size ${cls}">${text}</span>`;
+    if (blob) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = filename; a.textContent = ' Download';
+      li.lastChild.appendChild(a);
+    }
+    $('#results').prepend(li);
+    $('#resultsCard').hidden = false;
+  }
+
+  async function send(path, files, fields) {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+    for (const f of files) fd.append('file', f, f.name);
+    const res = await fetch(path, { method: 'POST', body: fd });
+    if (!res.ok) {
+      let msg = res.statusText;
+      try { msg = (await res.json()).error; } catch (_) {}
+      throw new Error(msg);
+    }
+    const cd = res.headers.get('Content-Disposition') || '';
+    const name = (cd.match(/filename="?([^";]+)"?/) || [])[1] || 'result';
+    return { blob: await res.blob(), name, before: +res.headers.get('X-Fk-Original-Size'), note: res.headers.get('X-Fk-Note') };
+  }
+
+  $('#go').onclick = async () => {
+    const go = $('#go'); go.disabled = true;
+    const label = go.textContent; go.textContent = 'Working…';
+    try {
+      if (state.action === 'merge') {
+        try {
+          const r = await send('/api/merge', state.files, {});
+          resultRow('merged.pdf', `${human(r.blob.size)}`, 'ok', r.blob, r.name);
+        } catch (e) { resultRow('merge', e.message, 'bad'); }
+      } else {
+        for (const f of state.files) {
+          try {
+            const fields = state.action === 'compress' ? { level: state.level } : { to: state.to };
+            const r = await send('/api/' + state.action, [f], fields);
+            let text = `${human(r.before)} → ${human(r.blob.size)}`;
+            if (state.action === 'compress' && r.blob.size < r.before) text += ` (−${Math.round((1 - r.blob.size / r.before) * 100)}%)`;
+            if (r.note) text = r.note;
+            resultRow(f.name, text, 'ok', r.blob, r.name);
+          } catch (e) { resultRow(f.name, e.message, 'bad'); }
+        }
+      }
+    } finally {
+      go.disabled = false; go.textContent = label;
+    }
+  };
+
+  render();
+})();
+</script>
+</body>
+</html>
